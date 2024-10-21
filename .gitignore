@@ -1,3 +1,7 @@
 /data/*
 *.mid
 *.midi
+
+/pickle files/*
+*.pickle
+*.pkl
