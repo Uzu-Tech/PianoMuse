@@ -5,3 +5,5 @@
 /pickle files/*
 *.pickle
 *.pkl
+
+*.pyc
