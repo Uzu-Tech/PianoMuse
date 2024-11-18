@@ -14,6 +14,7 @@ NUM_POSITION_SLOTS = 48
 class Encoder:
     def __init__(self):
         self.all_tokens = []
+        self.vocab = None
 
     def _reset_states(self):
         self.tokens = []
@@ -25,10 +26,34 @@ class Encoder:
         self.chord_time = 0
         self.time_to_pos = None
         self.key_signatures = None
+        self.readable = False
+
+    def set_vocab(self, vocab):
+        self.vocab = vocab
+
+    def get_number_from_token(self, token):
+        if not self.vocab:
+            raise ValueError("No vocab found, set vocab first with set_vocab method")
+
+        return self.vocab[token]
+
+    def add_tokens(self, *args: str):
+        for token in args:
+            if not self.readable:
+                self.tokens.append(self.get_number_from_token(token))
+            else:
+                self.tokens.append(token)
+
+    def change_token(self, idx, new_token):
+        if not self.readable:
+            self.tokens[idx] = self.get_number_from_token(new_token)
+        else:
+            self.tokens[idx] = new_token
 
     def encode(
         self, score: PrettyMIDI, genre: str = "Unknown", readable: bool = False
     ) -> List[str]:
+        self.readable = readable
         self._reset_states()
         self._initialize_score_details(score, genre)
         prev_tempo_bpm = prev_ts = prev_key = None
@@ -36,7 +61,7 @@ class Encoder:
             prev_tempo_bpm, prev_ts, prev_key = self.encode_note(
                 note, prev_tempo_bpm, prev_ts, prev_key
             )
-        self.tokens.append("EOS")
+        self.add_tokens("EOS")
         return self.tokens
 
     def _initialize_score_details(self, score, genre="Unknown"):
@@ -45,7 +70,8 @@ class Encoder:
         ts_changes = util.remove_duplicate_time_signatures(score.time_signature_changes)
         tempos_bpm = util.get_score_tempos_bpm(score, ts_changes)
 
-        self.tokens = ["SOS", genre]
+        self.tokens = []
+        self.add_tokens("SOS", genre)
         self.sorted_notes = sorted(
             list(util.get_score_notes(score)), key=lambda n: n.start
         )
@@ -97,6 +123,12 @@ class Encoder:
             )
             current_beat = (current_beat + 1) % time_signature.value.numerator
 
+        # Handle beat overflow
+        if Fraction(current_beat / num_beats_in_bar).limit_denominator(12) == 1:
+            position_in_beat = 0
+            current_beat = 0
+            current_bar += 1
+
         return (
             current_bar,
             current_beat / num_beats_in_bar,
@@ -106,7 +138,9 @@ class Encoder:
         )
 
     def encode_note(self, note, prev_tempo_bpm, prev_ts, prev_key):
+        # Skip invalid notes
         time_in_s = note.start - self.first_note_time
+
         note_bar, note_beat, note_pos, active_tempo_bpm, active_ts = self.time_to_pos(
             time_in_s
         )
@@ -116,10 +150,8 @@ class Encoder:
             self.chord_notes.append(note)
             if note != self.sorted_notes[-1]:
                 return active_tempo_bpm, active_ts, active_key
-        
+
         if time_in_s != 0:
-            if note == self.sorted_notes[-1]:
-                print("Adding chord notes")
             self._add_chord_tokens(
                 self.chord_notes,
                 self.chord_time,
@@ -133,7 +165,7 @@ class Encoder:
         self._append_position_tokens(note_bar, note_beat, note_pos, active_ts)
         # Add the last note if needed
         if note == self.sorted_notes[-1] and note not in self.chord_notes:
-            self.tokens.append("Single")
+            self.add_tokens("Single")
             # Get the velocity pitch and duration
             self.current_state["velocity"] = self._append_vpod_tokens(
                 note,
@@ -178,7 +210,7 @@ class Encoder:
         # Recognize the chord from key and pitches
         chord = chords.recognize_chord(self.current_state["key"], chord_note_pitches)
         chord_prefix = "CHORD_" if chord not in ("Single", "Dyad", "Octave") else ""
-        self.tokens.append(f"{chord_prefix}{chord}")
+        self.add_tokens(f"{chord_prefix}{chord}")
 
         # Then add all the notes in the chord
         for chord_note in chord_notes:
@@ -200,19 +232,17 @@ class Encoder:
             }
 
         # Finish the chord
-        self.tokens.append("EOC")
+        self.add_tokens("EOC")
 
     def _append_vpod_tokens(self, note, prev_velocity, tempo_bpm, time_signature, key):
         v, p, o, d_bars, d_offset = self._get_vpod_tokens(
             note, prev_velocity, tempo_bpm, time_signature, key
         )
-        self.tokens.extend(
-            [
-                f"Vel_{v}",
-                f"Pitch_{p}",
-                f"Octave_{o}",
-                f"Duration_{d_bars}brs_{d_offset}off",
-            ]
+        self.add_tokens(
+            f"Vel_{v}",
+            f"Pitch_{p}",
+            f"Octave_{o}",
+            f"Duration_{d_bars}brs_{d_offset}off",
         )
         return v if v != "Same" else prev_velocity
 
@@ -225,13 +255,13 @@ class Encoder:
         octave = util.clamp(octave, 0, 9)
 
         duration_as_bar_fraction, duration_offset = self._get_duration_tokens(
-            note, tempo_bpm, time_signature
+            note.get_duration(), tempo_bpm, time_signature
         )
         return velocity, pitch, octave, duration_as_bar_fraction, duration_offset
 
-    def _get_duration_tokens(self, note, tempo_bpm, time_signature):
+    def _get_duration_tokens(self, duration, tempo_bpm, time_signature):
         num_beats_in_bar = util.get_num_beats_in_bar(time_signature)
-        duration_in_beats = round(tempo_bpm / 60 * note.get_duration(), 6)
+        duration_in_beats = round(tempo_bpm / 60 * duration, 6)
         # Limit the duration of a note to 2 bars
         duration_in_beats = min(2 * num_beats_in_bar, duration_in_beats)
         duration_in_beats_int = int(duration_in_beats)
@@ -248,19 +278,19 @@ class Encoder:
             duration_in_beats_int = duration_in_beats_int + 1
             duration_as_bar_fraction = Fraction(
                 duration_in_beats_int / num_beats_in_bar
-            )
+            ).limit_denominator(12)
 
         return duration_as_bar_fraction, duration_offset
 
     def _update_score_details(self, active_key, active_tempo, active_ts):
         if active_key != self.current_state["key"]:
-            self.tokens.append(f"Key_{util.number_to_key(active_key)}")
+            self.add_tokens(f"Key_{util.number_to_key(active_key)}")
             self.current_state["key"] = active_key
         if active_tempo != self.current_state["tempo"]:
-            self.tokens.append(f"Tempo_{active_tempo}")
+            self.add_tokens(f"Tempo_{active_tempo}")
             self.current_state["tempo"] = active_tempo
         if active_ts != self.current_state["time signature"]:
-            self.tokens.append(
+            self.add_tokens(
                 f"Time Signature_{active_ts.numerator}/{active_ts.denominator}"
             )
             self.current_state["time signature"] = active_ts
@@ -275,23 +305,24 @@ class Encoder:
         # Check if the note overlaps with an active note on the same pitch
         if note.pitch in active_notes:
             prev_active_note = active_notes[note.pitch]
-            if prev_active_note["end"] > round(time_in_s, 6):
+            if prev_active_note["end"] > round(time_in_s, 6) and prev_active_note[
+                "start"
+            ] < round(time_in_s, 6):
                 # Adjust the previous note's duration to end before this note starts
-                prev_note = prev_active_note["note"]
-                prev_note.end = time_in_s
                 prev_duration_bars, prev_duration_offset = self._get_duration_tokens(
-                    note,
+                    time_in_s - prev_active_note["start"],
                     self.current_state["tempo"],
                     self.current_state["time signature"],
                 )
-                self.tokens[prev_active_note["duration_index"]] = (
-                    f"Duration_{prev_duration_bars}brs_{prev_duration_offset}off"
+                self.change_token(
+                    prev_active_note["duration_index"],
+                    f"Duration_{prev_duration_bars}brs_{prev_duration_offset}off",
                 )
 
     def _append_position_tokens(self, bar, beat, pos, time_signature):
         # Set the bar, beat and position
         if bar != self.current_state["bar"]:
-            self.tokens.append("Bar")
+            self.add_tokens("Bar")
             self.current_state["bar"] = bar
         beat_in_bars = Fraction(beat).limit_denominator(12)
         # Add a special token for the last beat
@@ -300,5 +331,5 @@ class Encoder:
             if beat_in_bars.numerator == time_signature.numerator - 1
             else beat_in_bars
         )
-        self.tokens.append(f"Beat_{beat_in_bars}")
-        self.tokens.append(f"Pos_{pos}")
+        self.add_tokens(f"Beat_{beat_in_bars}")
+        self.add_tokens(f"Pos_{pos}")

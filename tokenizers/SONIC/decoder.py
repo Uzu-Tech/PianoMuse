@@ -44,6 +44,18 @@ class Decoder:
             "Octave": self._update_velocity_or_pitch_or_octave,
             "Duration": self._add_note,
         }
+        self._vocab = None
+        self.readable = False
+
+    def set_vocab(self, vocab):
+        self._vocab = vocab
+
+    def get_token(self, token):
+        if self.readable:
+            return token
+        
+        return self._vocab.inverse[token]
+
 
     def _reset_states(self) -> None:
         """
@@ -56,7 +68,7 @@ class Decoder:
         self.state = ScoreState()
         self.first_bar = self.time_signature_changed = True
 
-    def decode(self, tokens: List[str]) -> MIDIFile:
+    def decode(self, tokens: List[str], readable=False) -> MIDIFile:
         """
         Decodes a list of tokens into a MIDI file.
 
@@ -66,19 +78,22 @@ class Decoder:
         Returns:
             MIDIFile: The generated MIDI file.
         """
+        self.readable = readable
         self._reset_states()
         # Find first time signature
         for token in tokens:
+            token = self.get_token(token)
             if token.startswith("Time Signature"):
                 self._update_time_signature(token)
                 break
 
         for token in tokens:
+            token = self.get_token(token)
             # Skip unnecessary tokens
             if self._ignorable_token(token):
                 continue
 
-            # Find the appropriate decoder for the token prefix
+            # Find the appropriate decoder for the token
             for prefix, decode in self.token_decoders.items():
                 if token.startswith(prefix):
                     decode(token)  # Call the decode method
