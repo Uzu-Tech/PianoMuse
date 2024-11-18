@@ -1,13 +1,20 @@
 from pretty_midi import PrettyMIDI
 from typing import List
 
-class Tokenizer():
-    def __init__(self):
+class MIDI_Tokenizer():
+    def __init__(self, encoder, decoder):
         self.merges = {} # (int, int) -> int
+        self.encoder = encoder
+        self.decoder = decoder
 
-    @property
-    def vocab(self):
-        pass
+    def build_vocab(self):
+        raise NotImplementedError
+    
+    def encode(self, score: 'PrettyMIDI', readable=False):
+        return self.encoder.encode(score, readable)
+
+    def decode(self, score: 'PrettyMIDI', readable=False):
+        return self.decoder.decode(score, readable)
 
     def train(self, text, vocab_size):
         """
@@ -16,14 +23,3 @@ class Tokenizer():
         """
         raise NotImplementedError
 
-    def encode(self, midi_file: 'PrettyMIDI') -> List[int]:
-        """
-        A method to encode a pretty midi file into a list of indexed tokens
-        """
-        raise NotImplementedError
-
-    def decode(self, ids):
-        """
-        A method to decode a list of indexed tokens into a pretty midi file
-        """
-        raise NotImplementedError
