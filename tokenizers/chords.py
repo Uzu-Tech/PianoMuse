@@ -10,7 +10,7 @@ def recognize_chord(key, note_pitches):
     if len(note_pitches) > 1 and len(unique_notes) == 1:
         return "Octave"
     
-    note_pitches = unique_notes_list
+    note_pitches = tuple(unique_notes_list)
 
     if len(note_pitches) < 2:
         return "Single"
@@ -37,7 +37,8 @@ def recognize_chord(key, note_pitches):
         root_note = non_base_pitches[root_idx]
         degree = (root_note + base_note_pitch - key) % 12
         base_note_degree = (base_note_pitch - key) % 12
-        return f"{degree}_{name}/{base_note_degree}"
+        #return f"{degree}_{name}/{base_note_degree}"
+        return f"{degree}_{name}_Slash" 
     
     # Check for extensions be removing all notes except important intervals like thirds
     # and sevenths
