@@ -21,7 +21,7 @@ def build_vocab(genres, special_tokens):
         vocab[f"Tempo_{i}"] = vocab_idx
         vocab_idx += 1
     # Time Signature
-    numerators = [2, 3, 4, 5, 6, 7, 9, 12,]
+    numerators = [2, 3, 4, 5, 6, 7, 9, 12]
     denominators = [2, 4, 8]
     for numerator, denominator in product(numerators, denominators):
         vocab[f"Time Signature_{numerator}/{denominator}"] = vocab_idx
@@ -31,7 +31,7 @@ def build_vocab(genres, special_tokens):
     vocab["Bar"] = vocab_idx
     vocab_idx += 1
     # Beat
-    num_beats = [2, 3, 4, 5, 7, 8]
+    num_beats = [2, 3, 4, 5, 7]
     for beat_num in num_beats:
         for beat_pos in range(beat_num - 1):
             beat_vocab = f"Beat_{Fraction(beat_pos/beat_num).limit_denominator(12)}"
