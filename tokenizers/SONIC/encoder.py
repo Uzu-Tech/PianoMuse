@@ -15,6 +15,7 @@ class Encoder:
     def __init__(self):
         self.all_tokens = []
         self.vocab = None
+        self.readable = False
 
     def _reset_states(self):
         self.tokens = []
@@ -26,7 +27,6 @@ class Encoder:
         self.chord_time = 0
         self.time_to_pos = None
         self.key_signatures = None
-        self.readable = False
 
     def set_vocab(self, vocab):
         self.vocab = vocab
@@ -320,6 +320,7 @@ class Encoder:
                 )
 
     def _append_position_tokens(self, bar, beat, pos, time_signature):
+        num_beats = util.get_num_beats_in_bar(time_signature)
         # Set the bar, beat and position
         if bar != self.current_state["bar"]:
             self.add_tokens("Bar")
@@ -328,7 +329,7 @@ class Encoder:
         # Add a special token for the last beat
         beat_in_bars = (
             "Last"
-            if beat_in_bars.numerator == time_signature.numerator - 1
+            if beat_in_bars.numerator == num_beats - 1
             else beat_in_bars
         )
         self.add_tokens(f"Beat_{beat_in_bars}")
