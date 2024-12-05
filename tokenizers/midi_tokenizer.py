@@ -1,18 +1,22 @@
-import re
-from collections import defaultdict
-from typing import List
+from dataclasses import dataclass
 
 from pretty_midi import PrettyMIDI
+
+from data_structures.linked_array import LinkedArray
+from data_structures.max_priority_map import MaxPriorityMap
+
+@dataclass
+class PairHeapItem:
+    pair: tuple
+    positions: set
 
 
 class MIDI_Tokenizer:
     def __init__(self, encoder, decoder, vocab):
         self.merges = {}  # (int, int) -> int
-        self.encoder = encoder
-        self.decoder = decoder
-        self.tokens_list = []
-        self.merged_tokens_list = []
-        self.vocab = vocab
+        self._encoder = encoder
+        self._decoder = decoder
+        self._vocab = vocab
 
     def build_vocab(self):
         raise NotImplementedError
@@ -20,179 +24,230 @@ class MIDI_Tokenizer:
     def encode_all(self, midi_files):
         for genre in midi_files:
             for file in midi_files[genre]:
-                self.tokens_list.append(self.encode(file, genre))
+                self._tokens_list.append(self.encode(file, genre))
+        return self._tokens_list
 
     def encode(self, score: "PrettyMIDI", genre, readable=False):
-        return self.encoder.encode(score, genre, readable)
+        return self._encoder.encode(score, genre, readable)
 
     def decode(self, score: "PrettyMIDI", readable=False):
-        return self.decoder.decode(score, readable)
+        return self._decoder.decode(score, readable)
 
-    def train(self, midi_files, vocab_size, readable=False):
-        """
-        A method to the train the tokenizer on a dataset of pretty midi files, to learn
-        the most common merges it needs to perform.
-        """
-        self.encode_all(midi_files)
-        split_tokens = [self.split_tokens(tokens) for tokens in self.tokens_list]
-        merged_tokens_list = list(split_tokens)
-        num_merges = vocab_size - len(self.vocab)
-        new_token = len(self.vocab)
+    def train_tokens(
+        self,
+        tokens_list,
+        vocab_size,
+        get_token_type=None,
+        is_unmergeable=None,
+        is_mergeable_token_types=None,
+    ):
+        # Convert readable unmergeable tokens to their numbered tokens
+        if is_unmergeable:
+            self._is_unmergeable = is_unmergeable
+
+        if is_mergeable_token_types:
+            self.is_mergeable_token_types = is_mergeable_token_types
+
+        if get_token_type:
+            self._get_token_type = get_token_type
+
+        self._tokens_list = [LinkedArray(tokens) for tokens in tokens_list]
+        self._pair_heap = self._create_pair_heap()
+        num_merges = vocab_size - len(self._vocab)
+
+        new_token = len(self._vocab)
         for _ in range(num_merges):
-            pair_counts = self.count_all_pairs(merged_tokens_list, readable)
-            max_pair = max(pair_counts, key=pair_counts.get)
-            if max_pair[0] < len(self.vocab) and max_pair[1] < len(self.vocab):
-                token_1, token_2 = (
-                    self.vocab.inv[max_pair[0]],
-                    self.vocab.inv[max_pair[1]],
-                )
-            else:
-                token_1, token_2 = max_pair
-            merged_tokens_list = self.merge(merged_tokens_list, max_pair, new_token)
-            self.merges[max_pair] = new_token
+            max_pair = self._pair_heap.pop()
+            self._merge_pair_and_update_heap(max_pair, new_token)
             new_token += 1
 
-        self.merged_tokens_list = merged_tokens_list
-
-    def split_tokens(self, tokens, readable=False):
-        """
-        Splits a list of tokens into chunks grouped by matching patterns.
-
-        Parameters:
-            tokens (list): A list of token strings to process.
-
-        Returns:
-            list: A new list where tokens are grouped into chunks based on patterns.
-        """
-
-        def get_token_type(token):
-            if re.match(r"^(Vel|Pitch|Octave|Duration)_", token):
-                return "VPOD"
-            if re.match(r"^(Bar|Beat|Pos)", token):
-                return "POS"
-            return "Separate"
-
-        new_tokens = []  # Resulting list of tokens or grouped chunks
-        tokens_chunk = []  # Current chunk of tokens being grouped
-        token_type = last_token_type = None
-
-        for token in tokens:
-            readable_token = self.get_readable_token(token, readable)
-            token_type = get_token_type(readable_token)
-            # If the token group changes
-            if (
-                tokens_chunk
-                and token_type != last_token_type
-                or (token_type == "VPOD"
-                and last_token_type == "VPOD"
-                and len(tokens_chunk) >= 4)
-            ):
-                new_tokens.append(tokens_chunk)
-                tokens_chunk = []
-
-                if token_type == "Separate":
-                    new_tokens.append(token)
-                else:
-                    tokens_chunk = [token]
-
-            else:
-                if token_type == "Separate":
-                    new_tokens.append(token)
-                else:
-                    tokens_chunk.append(token)
-
-            last_token_type = token_type
-
-        if tokens_chunk:
-            new_tokens.append(tokens_chunk)
-
-        return new_tokens
-
-    def merge(self, tokens_list, pair, new_token):
-        merged_tokens_list = []
-        for tokens in tokens_list:
-            new_tokens = []
-            chunk_idx = 0
-            while chunk_idx < len(tokens):
-
-                token_chunk = tokens[chunk_idx]
-                new_tokens_chunk = []
-                i = 0
-                while isinstance(token_chunk, list) and i < len(token_chunk):
-                    # Check if the current and next token form the pair
-                    if (
-                        i < len(token_chunk) - 1
-                        and (token_chunk[i], token_chunk[i + 1]) == pair
-                    ):
-                        new_tokens_chunk.append(new_token)  # Merge the pair
-                        i += 2  # Skip the pair
-                    else:
-                        new_tokens_chunk.append(token_chunk[i])  # Add the current token
-                        i += 1  # Move to the next token
-
-                if len(new_tokens_chunk) == 1:
-                    new_tokens_chunk = new_tokens_chunk[0]
-
-                if new_tokens_chunk:
-                    new_tokens.append(new_tokens_chunk)
-                    chunk_idx += 1
-                elif (
-                    chunk_idx < len(tokens) - 1
-                    and not isinstance(tokens[chunk_idx + 1], list)
-                    and (token_chunk, tokens[chunk_idx + 1]) == pair
-                ):
-                    new_tokens.append(new_token)  # Merge the pair
-                    chunk_idx += 2
-                else:
-                    new_tokens.append(token_chunk)
-                    chunk_idx += 1
-
-            merged_tokens_list.append(new_tokens)
-
-        return merged_tokens_list
-
-    def count_all_pairs(self, tokens_list, readable=False):
-        pairs = defaultdict(int)  # Initialize a dictionary to store pair counts
-        for tokens in tokens_list:
-            idx = 0
-            for group in tokens:
-                if idx == len(tokens) - 1:
-                    break
-
-                if isinstance(group, list):
-                    pairs = self.count_pairs(group, pairs)
-                elif (
-                    self.is_mergeable(group, readable)
-                    and self.is_mergeable_forward(group, readable)
-                    and (
-                        not isinstance(tokens[idx + 1], list)
-                        and self.is_mergeable(tokens[idx + 1], readable)
-                    )
-                ):
-                    pairs[group, tokens[idx + 1]] += 1
-
-                idx += 1
-        return pairs
-
-    def count_pairs(self, lst, pairs: defaultdict):
-        for pair in zip(lst, lst[1:]):
-            pairs[pair] += 1
-        return pairs
-
-    def get_readable_token(self, token, readable=False):
-        if readable:
-            return token
-        return self.vocab.inv.get(token, "Merged Token")
-
-    def is_mergeable(self, token, readable):
-        readable_token = self.get_readable_token(token, readable)
-        return not (
-            readable_token in ["SOS", "EOS", "EOC"]
-            or readable_token.startswith("Time Signature")
-            or readable_token.startswith("Key")
-            or readable_token.startswith("Tempo")
+    def _create_pair_heap(self):
+        self._token_type_map = {}
+        heap = MaxPriorityMap(
+            heap_key=lambda x: len(x.positions), map_key=lambda x: x.pair
         )
 
-    def is_mergeable_forward(self, token, readable):
-        readable_token = self.get_readable_token(token, readable)
-        return readable_token != "EOC"
+        pair_heap_items = {}
+        for token_list_idx, tokens in enumerate(self._tokens_list):
+            for token_idx in range(len(tokens) - 1):
+                pair = (tokens[token_idx].value, tokens[token_idx + 1].value)
+                # Types: Singular or a Specific Group
+                token_type1 = self._token_type_map.setdefault(
+                    pair[0], self._get_token_type(self._translate_token(pair[0]))
+                )
+                token_type2 = self._token_type_map.setdefault(
+                    pair[1], self._get_token_type(self._translate_token(pair[1]))
+                )
+
+                if (
+                    not self.is_mergeable_token_types(token_type1, token_type2)
+                    or self._is_unmergeable(self._translate_pair(pair))
+                ):
+                    continue
+
+                if pair not in pair_heap_items:
+                    pair_heap_items[pair] = PairHeapItem(pair=pair, positions=set())
+                pair_heap_items[pair].positions.add((token_list_idx, token_idx))
+
+        for pair in pair_heap_items:
+            heap.push(pair_heap_items[pair])
+
+        return heap
+
+    def _merge_pair_and_update_heap(self, merge_pair, new_token):
+        for merge_position in list(merge_pair.positions):
+            tokens_list_idx, tokens_idx = merge_position
+            if merge_position not in merge_pair.positions:
+                continue
+
+            # Get the tokens where the merge is happening
+            tokens = self._tokens_list[tokens_list_idx]
+            self._update_heap_before_merge(
+                tokens, merge_pair, merge_position, new_token
+            )
+            tokens.merge_pair(tokens_idx, new_token)
+            merge_pair.positions.remove((tokens_list_idx, tokens_idx))
+
+        print(
+            f"({self._vocab.inv.get(merge_pair.pair[0], merge_pair.pair[0])}, "
+            f"{self._vocab.inv.get(merge_pair.pair[1], merge_pair.pair[1])})"
+            f" -> {new_token} "
+        )
+
+    def _update_heap_before_merge(self, tokens, merge_pair, merge_position, new_token):
+        # Position of the first token in the merge pair
+        tokens_list_idx, tokens_idx = merge_position[0], merge_position[1]
+        # Indexes of the tokens right, left and second left of token
+        left_idx = tokens.get_previous_idx(tokens_idx)
+        right_idx = tokens.get_second_next_idx(tokens_idx)
+        second_left_idx = tokens.get_second_previous_idx(tokens_idx)
+        # The previous pair of tokens before the merge
+        prev_pair_left = prev_pair_right = None
+        # Let the new merge token have token type of the second token in the pair
+        merge_pair_token_type = self._token_type_map[merge_pair.pair[1]]
+        # Get token types of surrounding tokens
+        token_type_left = self._get_token_type_from_map(tokens, left_idx)
+        token_type_right = self._get_token_type_from_map(tokens, right_idx)
+        token_type_second_left = self._get_token_type_from_map(tokens, second_left_idx)
+        # Check if the new token can merge with it's surroundings
+        left_mergeable, right_mergeable = self._is_new_token_mergeable(
+            merge_pair_token_type,
+            token_type_left,
+            token_type_right,
+            token_type_second_left,
+        )
+
+        # If a token can never merge left or right it must be a new singular token with
+        # no surrounding group
+        new_token_type = (
+            merge_pair_token_type if left_mergeable or right_mergeable else "Singular"
+        )
+        # Update token type map
+        self._token_type_map[new_token] = new_token_type
+
+        # If the new token type is singular check if it can now merge left or right
+        left_mergeable = left_mergeable or (
+            new_token_type == token_type_left == "Singular"
+        )
+        right_mergeable = right_mergeable or (
+            new_token_type == token_type_right == "Singular"
+        )
+
+        # Update left pair positions on heap
+        if left_idx is not None:
+            prev_pair_left = (tokens[left_idx].value, merge_pair.pair[0])
+            self._remove_position_from_pair(
+                merge_pair, prev_pair_left, tokens_list_idx, left_idx
+            )
+            merged_left = (tokens[left_idx].value, new_token)
+            # Merge only similar token types and don't merge unmergeable
+            if left_mergeable and not self._is_unmergeable(
+                self._translate_pair(merged_left)
+            ):
+                self._add_position_to_pair(merged_left, tokens_list_idx, left_idx)
+
+        # Update right pair positions on heap
+        if right_idx is not None:
+            next_idx = tokens.get_next_idx(tokens_idx)
+            prev_pair_right = (merge_pair.pair[1], tokens[right_idx].value)
+            self._remove_position_from_pair(
+                merge_pair, prev_pair_right, tokens_list_idx, next_idx
+            )
+            merged_right = (new_token, tokens[right_idx].value)
+            if right_mergeable and not self._is_unmergeable(
+                self._translate_pair(merged_right)
+            ):
+                # Merge only similar token types and don't merge unmergeable
+                self._add_position_to_pair(merged_right, tokens_list_idx, tokens_idx)
+
+    def _is_new_token_mergeable(
+        self,
+        merged_token_type,
+        token_type_left,
+        token_type_right,
+        token_type_second_left,
+    ):
+        left_mergeable = self.is_mergeable_token_types(
+            token_type_left,
+            merged_token_type,
+            token_type_previous=token_type_second_left,
+            is_merged_token=True,
+        )
+
+        right_mergeable = self.is_mergeable_token_types(
+            merged_token_type,
+            token_type_right,
+            token_type_previous=token_type_left,
+            is_merged_token=True,
+        )
+
+        return left_mergeable, right_mergeable
+
+    def _get_token_type_from_map(self, tokens, idx):
+        return self._token_type_map[tokens[idx].value] if idx is not None else None
+
+    def _remove_position_from_pair(self, merge_pair, pair, tokens_list_idx, tokens_idx):
+        # Since merge pair hasn't been added to the heap yet check if the pair to remove this the same
+        if merge_pair.pair == pair:
+            merge_pair.positions.remove((tokens_list_idx, tokens_idx))
+            return
+
+        if pair not in self._pair_heap:
+            return
+
+        # Remove the pair, remove the position and add it back if needed
+        pair_item = self._pair_heap.pop_by_map_key(pair)
+
+        # Sometimes token pairs may be unmergeable at different positions
+        # So a unmergeable position will not be in the pair's positions
+        if (tokens_list_idx, tokens_idx) in pair_item.positions:
+            pair_item.positions.remove((tokens_list_idx, tokens_idx))
+
+        if pair_item.positions:
+            self._pair_heap.push(pair_item)
+
+    def _add_position_to_pair(self, pair, tokens_list_idx, tokens_idx):
+        pair_item = (
+            self._pair_heap.pop_by_map_key(pair)
+            if pair in self._pair_heap
+            else PairHeapItem(pair=pair, positions=set())
+        )
+        pair_item.positions.add((tokens_list_idx, tokens_idx))
+
+        self._pair_heap.push(pair_item)
+
+    def _translate_pair(self, pair):
+        return tuple(self._vocab.inv.get(token, "") for token in pair)
+    
+    def _translate_token(self, token):
+        return self._vocab.inv.get(token, "")
+
+    # Default token type getter: every token is Singular
+    def _get_token_type(self, token):
+        return "Singular"
+
+    def _is_unmergeable(self, pair):
+        return False
+
+    def is_mergeable_token_types(self, token_type1, token_type2):
+        return token_type1 == token_type2
