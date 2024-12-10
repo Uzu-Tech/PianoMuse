@@ -4,12 +4,12 @@ from pretty_midi import PrettyMIDI
 
 from data_structures.linked_array import LinkedArray
 from data_structures.max_priority_map import MaxPriorityMap
+from data_structures.merge_trie import MergeTrie
 
 @dataclass
 class PairHeapItem:
     pair: tuple
     positions: set
-
 
 class MIDI_Tokenizer:
     def __init__(self, encoder, decoder, vocab):
@@ -17,17 +17,30 @@ class MIDI_Tokenizer:
         self._encoder = encoder
         self._decoder = decoder
         self._vocab = vocab
+        self._merge_trie = MergeTrie(vocab)
+        self._encoded_tokens = []
+        self._is_trained = False
 
     def build_vocab(self):
         raise NotImplementedError
 
-    def encode_all(self, midi_files):
+    def encode_with_bpe(self, midi_files):
+        if not self._is_trained:
+            raise ValueError("Tokenizer isn't trained, run train_tokens method first")
+
         for genre in midi_files:
             for file in midi_files[genre]:
-                self._tokens_list.append(self.encode(file, genre))
-        return self._tokens_list
+                self._encoded_tokens.append(
+                    self._merge_trie._merge(self.encode(file, genre))
+                )
 
-    def encode(self, score: "PrettyMIDI", genre, readable=False):
+    def bpe_test(self, tokens_list):
+        return [self._merge_trie._merge(tokens) for tokens in tokens_list]
+
+    def get_encoded_tokens(self):
+        return self._encoded_tokens
+
+    def encode(self, score: "PrettyMIDI", genre="Unknown", readable=False):
         return self._encoder.encode(score, genre, readable)
 
     def decode(self, score: "PrettyMIDI", readable=False):
@@ -41,7 +54,10 @@ class MIDI_Tokenizer:
         is_unmergeable=None,
         is_mergeable_token_types=None,
     ):
-        # Convert readable unmergeable tokens to their numbered tokens
+
+        self._merge_trie = MergeTrie(self._vocab)
+        self._encoded_tokens = []
+
         if is_unmergeable:
             self._is_unmergeable = is_unmergeable
 
@@ -55,11 +71,16 @@ class MIDI_Tokenizer:
         self._pair_heap = self._create_pair_heap()
         num_merges = vocab_size - len(self._vocab)
 
+        print("Beginning Merges...")
         new_token = len(self._vocab)
         for _ in range(num_merges):
             max_pair = self._pair_heap.pop()
             self._merge_pair_and_update_heap(max_pair, new_token)
+            self._merge_trie._insert_merge(max_pair.pair, new_token)
             new_token += 1
+
+        print(f"\n{num_merges} merges completed successfully")
+        self._is_trained = True
 
     def _create_pair_heap(self):
         self._token_type_map = {}
@@ -79,10 +100,9 @@ class MIDI_Tokenizer:
                     pair[1], self._get_token_type(self._translate_token(pair[1]))
                 )
 
-                if (
-                    not self.is_mergeable_token_types(token_type1, token_type2)
-                    or self._is_unmergeable(self._translate_pair(pair))
-                ):
+                if not self.is_mergeable_token_types(
+                    token_type1, token_type2
+                ) or self._is_unmergeable(self._translate_pair(pair)):
                     continue
 
                 if pair not in pair_heap_items:
@@ -91,6 +111,8 @@ class MIDI_Tokenizer:
 
         for pair in pair_heap_items:
             heap.push(pair_heap_items[pair])
+
+        print("Heap created successfully\n")
 
         return heap
 
@@ -238,7 +260,7 @@ class MIDI_Tokenizer:
 
     def _translate_pair(self, pair):
         return tuple(self._vocab.inv.get(token, "") for token in pair)
-    
+
     def _translate_token(self, token):
         return self._vocab.inv.get(token, "")
 

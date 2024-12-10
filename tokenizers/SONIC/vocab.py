@@ -16,10 +16,12 @@ def build_vocab(genres, special_tokens):
     for i in range(0, 24):
         vocab[f"Key_{number_to_key(i)}"] = vocab_idx
         vocab_idx += 1
+
     # Tempo
     for i in range(25, 276):
         vocab[f"Tempo_{i}"] = vocab_idx
         vocab_idx += 1
+        
     # Time Signature
     numerators = [2, 3, 4, 5, 6, 7, 9, 12]
     denominators = [2, 4, 8]
