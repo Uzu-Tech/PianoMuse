@@ -6,15 +6,15 @@ from typing import List
 
 from pretty_midi import PrettyMIDI
 
-from tokenizers import chords, util
+from model.tokenizers import chords, util
 
 NUM_POSITION_SLOTS = 48
 
 
 class Encoder:
-    def __init__(self):
+    def __init__(self, vocab):
         self.all_tokens = []
-        self.vocab = None
+        self.vocab = vocab
         self.readable = False
 
     def _reset_states(self):

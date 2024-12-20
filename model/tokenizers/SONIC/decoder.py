@@ -3,13 +3,12 @@ from collections import namedtuple
 from dataclasses import dataclass
 from fractions import Fraction
 from midiutil import MIDIFile
-from tokenizers import util
+from model.tokenizers import util
 from typing import List
 
 TimeSignature = namedtuple("TimeSignature", ["numerator", "denominator"])
 
 NUM_POSITION_SLOTS = 48
-
 
 @dataclass
 class ScoreState:
@@ -26,7 +25,7 @@ class ScoreState:
 
 
 class Decoder:
-    def __init__(self) -> None:
+    def __init__(self, vocab):
         """
         Initializes the Decoder class with a dictionary of token decoders.
         Each token prefix is mapped to the corresponding method for processing.
@@ -44,18 +43,13 @@ class Decoder:
             "Octave": self._update_velocity_or_pitch_or_octave,
             "Duration": self._add_note,
         }
-        self._vocab = None
-        self.readable = False
-
-    def set_vocab(self, vocab):
         self._vocab = vocab
+        self.readable = False
 
     def get_token(self, token):
         if self.readable:
             return token
-        
         return self._vocab.inverse[token]
-
 
     def _reset_states(self) -> None:
         """

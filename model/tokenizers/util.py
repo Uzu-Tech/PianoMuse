@@ -6,7 +6,12 @@ from typing import Callable, Iterator
 import numpy as np
 from pretty_midi import Note, PrettyMIDI, TimeSignature
 
-from tokenizers.data import mean_rolls, pitch_lookup, rolled_distributions, std_rolls
+from model.tokenizers.data import (
+    mean_rolls,
+    pitch_lookup,
+    rolled_distributions,
+    std_rolls,
+)
 
 
 def get_scores(midi_files: dict[str, list["PrettyMIDI"]]) -> Iterator[object]:
@@ -242,7 +247,9 @@ def qpm_to_bpm(qpm: float, time_signature: object) -> int:
     )  # Adjust for compound time if needed
 
 
-def bpm_to_qpm(bpm: float, time_signature: object, beats_to_quarters: bool=False) -> float:
+def bpm_to_qpm(
+    bpm: float, time_signature: object, beats_to_quarters: bool = False
+) -> float:
     """
     Converts a beats per minute (BPM) value to quarter notes per minute (QPM), adjusting for time signature.
 
@@ -318,7 +325,7 @@ def get_bar_position(
 
 def get_time_signature_bar_positions(
     tempos_bpm: list[tuple[float, float]],
-    time_signatures: list['TimeSignature'],
+    time_signatures: list["TimeSignature"],
     first_note_time: float,
 ) -> tuple[list[Tempo_Bars], list[Time_Signature_Bars]]:
     """
@@ -339,7 +346,7 @@ def get_time_signature_bar_positions(
         # If there is just one tempo and time signature, return them with zero bars and time
         time_signature = time_signatures[0]
         bpm, _ = tempos_bpm[0]
-        return (Tempo_Bars(bpm, 0, 0), ), (Time_Signature_Bars(time_signature, 0, 0), )
+        return (Tempo_Bars(bpm, 0, 0),), (Time_Signature_Bars(time_signature, 0, 0),)
 
     # Initialize counters for bars and times
     total_bars = total_bars_time = 0
@@ -349,32 +356,48 @@ def get_time_signature_bar_positions(
     ts_times = [ts.time for ts in time_signatures]
     tempo_times = [tempo[1] for tempo in tempos_bpm]
 
-    last_change_time = 0  # Keep track of the last time when either tempo or time signature changed
+    last_change_time = (
+        0  # Keep track of the last time when either tempo or time signature changed
+    )
 
-    prev_tempo_bpm = prev_ts = None  # To store previous tempo and time signature information
+    prev_tempo_bpm = prev_ts = (
+        None  # To store previous tempo and time signature information
+    )
 
     # Initialize lists to hold the bar positions for tempos and time signatures
     tempos_bpm_bar_positions = [
-        Tempo_Bars(tempos_bpm[0][0], 0, 0.0),  # Start with the first tempo at bar 0, time 0
+        Tempo_Bars(
+            tempos_bpm[0][0], 0, 0.0
+        ),  # Start with the first tempo at bar 0, time 0
     ]
     ts_bar_positions = [
-        Time_Signature_Bars(time_signatures[0], 0, 0.0),  # Start with the first time signature at bar 0, time 0
+        Time_Signature_Bars(
+            time_signatures[0], 0, 0.0
+        ),  # Start with the first time signature at bar 0, time 0
     ]
 
     # Iterate through tempos and time signatures to calculate the bar positions
     while tempo_idx < len(tempos_bpm) or ts_idx < len(time_signatures):
         # Get the current time signature and tempo for the respective indices
-        ts = time_signatures[min(ts_idx, len(time_signatures) - 1)]  # Ensure we don't go out of bounds
-        tempo_bpm, tempo_bpm_time = tempos_bpm[min(tempo_idx, len(tempos_bpm) - 1)]  # Same for tempo
+        ts = time_signatures[
+            min(ts_idx, len(time_signatures) - 1)
+        ]  # Ensure we don't go out of bounds
+        tempo_bpm, tempo_bpm_time = tempos_bpm[
+            min(tempo_idx, len(tempos_bpm) - 1)
+        ]  # Same for tempo
 
         # Look for a tempo change
         # or if we have processed all time signatures
-        if (ts.time >= tempo_bpm_time and tempo_idx < len(tempos_bpm)) or ts_idx >= len(time_signatures):
+        if (ts.time >= tempo_bpm_time and tempo_idx < len(tempos_bpm)) or ts_idx >= len(
+            time_signatures
+        ):
             # Find the closest time signature to the current tempo change time
             ts_at_tempo_idx = bisect_right(ts_times, tempo_bpm_time) - 1
             ts_at_tempo = time_signatures[ts_at_tempo_idx]
-            num_beats_in_bar = get_num_beats_in_bar(ts_at_tempo)  # Get beats in the bar for this time signature
-            
+            num_beats_in_bar = get_num_beats_in_bar(
+                ts_at_tempo
+            )  # Get beats in the bar for this time signature
+
             # Set previous tempo for later bar calculation
             prev_tempo_bpm, _ = tempos_bpm[min(tempo_idx, len(tempos_bpm) - 1) - 1]
 
@@ -387,46 +410,54 @@ def get_time_signature_bar_positions(
             # Update the total bars and total time
             total_bars += new_bars
             total_bars_time += new_bars * ((num_beats_in_bar * 60) / prev_tempo_bpm)
-            
+
             # Add a new Tempo_Bars entry to keep track of tempo changes in relation to bars
             tempos_bpm_bar_positions.append(
                 Tempo_Bars(tempo_bpm, total_bars, total_bars_time - first_note_time)
             )
-            
+
             # Move to the next tempo
             tempo_idx += 1
-            last_change_time = tempo_bpm_time  # Update the last change time to the current tempo time
+            last_change_time = (
+                tempo_bpm_time  # Update the last change time to the current tempo time
+            )
 
         else:
             # If the time signature change happens first, calculate bar positions based on that
             tempo_at_ts_idx = bisect_right(tempo_times, tempo_bpm_time) - 1
-            tempo_at_ts = tempos_bpm[tempo_at_ts_idx][0]  # Get the tempo at the closest time signature change
+            tempo_at_ts = tempos_bpm[tempo_at_ts_idx][
+                0
+            ]  # Get the tempo at the closest time signature change
             prev_ts = time_signatures[min(ts_idx, len(time_signatures) - 1) - 1]
-            num_beats_in_bar = get_num_beats_in_bar(prev_ts)  # Get beats in the bar for this time signature
-            
+            num_beats_in_bar = get_num_beats_in_bar(
+                prev_ts
+            )  # Get beats in the bar for this time signature
+
             # Calculate the time elapsed since the last change
             time_in_between = ts.time - last_change_time
-            
+
             # Calculate the new bars based on the elapsed time and the current tempo
             new_bars = round((tempo_at_ts / num_beats_in_bar / 60) * time_in_between)
-            
+
             # Update the total bars and total time
             total_bars += new_bars
             total_bars_time += new_bars * ((num_beats_in_bar * 60) / tempo_at_ts)
-            
+
             # Add a new Time_Signature_Bars entry to track the bar positions for time signature changes
             ts_bar_positions.append(
                 Time_Signature_Bars(ts, total_bars, total_bars_time - first_note_time)
             )
-            
+
             # Move to the next time signature
             ts_idx += 1
-            last_change_time = ts.time  # Update the last change time to the current time signature time
-        
+            last_change_time = (
+                ts.time
+            )  # Update the last change time to the current time signature time
+
         # Continue the loop until both tempos and time signatures have been processed
 
     # Return the final bar positions for both tempos and time signatures
-    return tempos_bpm_bar_positions, ts_bar_positions    
+    return tempos_bpm_bar_positions, ts_bar_positions
 
 
 def remove_duplicates_in_front(entries: list[object]) -> list[object]:
@@ -448,7 +479,7 @@ def remove_duplicates_in_front(entries: list[object]) -> list[object]:
     return result
 
 
-def get_num_beats_in_bar(time_signature: 'TimeSignature') -> int:
+def get_num_beats_in_bar(time_signature: "TimeSignature") -> int:
     """
     Calculates the number of beats in a bar based on the time signature.
 
@@ -465,7 +496,7 @@ def get_num_beats_in_bar(time_signature: 'TimeSignature') -> int:
     )
 
 
-def is_compound_time(time_signature: 'TimeSignature') -> bool:
+def is_compound_time(time_signature: "TimeSignature") -> bool:
     """
     Determines if a time signature is compound (e.g., 6/8, 9/8, 12/8).
 

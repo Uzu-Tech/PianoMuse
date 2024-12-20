@@ -32,7 +32,7 @@ class MergeTrie:
         self._merges[new_token] = combined_tokens
 
 
-    def _load_merges(self, merges):
+    def load_merges(self, merges):
         self._root = TrieNode()
         self._merges = {}
 
@@ -50,7 +50,6 @@ class MergeTrie:
                 current_node = current_node.children[token]
             current_node.value = merge_token
             current_node.is_end = True
-
     
     def _merge(self, tokens):
         current_node = self._root

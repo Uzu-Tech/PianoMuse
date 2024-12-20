@@ -15,6 +15,7 @@ def move_midi_files(src_dir: str, dest_dir: str):
             move_midi_files(item_path, dest_dir)
             # After moving files, remove the now-empty directory
             os.rmdir(item_path)  # Remove the directory if it's empty
+            
         elif item.endswith(".mid"):
             # Create a new filename if a file with the same name exists
             new_filename = item

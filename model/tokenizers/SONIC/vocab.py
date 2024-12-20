@@ -1,10 +1,10 @@
-from tokenizers.chords import chord_map
-from tokenizers.util import number_to_key
+from model.tokenizers.chords import chord_map
+from model.tokenizers.util import number_to_key
 from bidict import bidict
 from itertools import product
 from fractions import Fraction
 
-def build_vocab(genres, special_tokens):
+def build_vocab(genres):
     vocab = bidict()
     vocab_idx = 0
     # Genre
@@ -95,7 +95,7 @@ def build_vocab(genres, special_tokens):
                   vocab[duration_token] = vocab_idx
                   vocab_idx += 1 
 
-    for token in special_tokens:
+    for token in ("SOS", "EOC", "EOS"):
         vocab[token] = vocab_idx
         vocab_idx += 1
 
