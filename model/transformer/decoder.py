@@ -1,6 +1,6 @@
 import matplotlib_inline.backend_inline
 import torch.nn as nn
-from attention import MultiHeadAttention
+from model.transformer.attention import MultiHeadAttention
 
 matplotlib_inline.backend_inline.set_matplotlib_formats("svg", "pdf")
 
@@ -50,7 +50,7 @@ class DecoderBlock(nn.Module):
 
     def forward(self, x, mask=None):
         # Follow structure of X -> Self Attention -> Norm -> Feed Forward -> Norm
-        _, attention_values = self.self_attention.forward(x, mask)
+        attention_values, _ = self.self_attention.forward(x, mask)
         x += self.dropout(attention_values)
         x = self.norm_1(x)
 
