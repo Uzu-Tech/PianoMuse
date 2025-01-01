@@ -81,7 +81,7 @@ class MIDI_Tokenizer:
 
         # Save encoded tokens
         self.save_encoded_tokens(merged_tokens_list, save_dir)
-        print(f"Merged tokens saved to {save_dir}")
+        print(f"Encoded tokens saved to {save_dir}")
         return merged_tokens_list
 
     def encode_file(self, midi_file, genre="Unknown", readable=True):
@@ -110,8 +110,8 @@ class MIDI_Tokenizer:
     def encode_score(self, score: "PrettyMIDI", genre="Unknown", readable=False):
         return self._encoder.encode(score, genre, readable)
 
-    def decode_score(self, score: "PrettyMIDI", readable=False):
-        return self._decoder.decode(score, readable)
+    def decode_tokens(self, tokens: list, readable=False):
+        return self._decoder.decode(tokens, readable)
 
     def _get_readable_token(self, token):
         return self._vocab.inv.get(token, token)
