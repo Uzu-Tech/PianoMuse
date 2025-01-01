@@ -25,5 +25,4 @@ if __name__ == "__main__":
         score_filterer.is_valid_score
     )
 
-    tokenizer.process_and_encode(config.SAVE_DIR, config.MERGES_DIR)
-
+    tokenizer.process_and_encode(config.TOKENS_DIR, config.MERGES_DIR)
