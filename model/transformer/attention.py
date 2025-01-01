@@ -7,30 +7,41 @@ from torch import Tensor
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, context_size, embed_dim, num_heads):
+    def __init__(self, context_size, embed_dim, num_heads, reduction_factor=2):
         super().__init__()
         assert embed_dim % num_heads == 0
 
         self.context_size = context_size
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
+        self.head_dim = embed_dim // num_heads // reduction_factor
+        self.reduction_factor = reduction_factor
 
-        self.qkv_concat = torch.nn.Linear(embed_dim, embed_dim * 3)
-        self.output_proj = torch.nn.Linear(embed_dim, embed_dim)
+        # Adjusted projections for queries, keys, and values
+        self.queries_proj = torch.nn.Linear(embed_dim, embed_dim // reduction_factor)
+        self.keys_proj = torch.nn.Linear(embed_dim, embed_dim // reduction_factor)
+        self.values_proj = torch.nn.Linear(embed_dim, embed_dim // reduction_factor)
+
+        self.output_proj = torch.nn.Linear((embed_dim // reduction_factor), embed_dim)
+
         # Create learnable relative embeddings for each head
         self.relative_embeddings = nn.Parameter(
-            torch.empty(num_heads, context_size, self.head_dim)
+            torch.empty(num_heads, context_size, self.head_dim, dtype=torch.float32)
         )
         self._reset_parameters()
 
     def _reset_parameters(self):
         # Original Transformer initialization
-        nn.init.xavier_uniform_(self.qkv_concat.weight)
+        nn.init.xavier_uniform_(self.queries_proj.weight)
+        nn.init.xavier_uniform_(self.keys_proj.weight)
+        nn.init.xavier_uniform_(self.values_proj.weight)
         nn.init.xavier_uniform_(self.output_proj.weight)
         nn.init.xavier_uniform_(self.relative_embeddings)
-        # No biases were used
-        self.qkv_concat.bias.data.fill_(0)
+
+        # Initialize biases to 0
+        self.queries_proj.bias.data.fill_(0)
+        self.keys_proj.bias.data.fill_(0)
+        self.values_proj.bias.data.fill_(0)
         self.output_proj.bias.data.fill_(0)
 
     @staticmethod
@@ -50,7 +61,7 @@ class MultiHeadAttention(nn.Module):
 
         if relative_embeddings is not None:
             seq_len = queries.size(-2)
-            other_dimensions = queries.size()[:-2]
+            other_dims = queries.size()[:-2]
             # Calculate dot product between each Qi and relative embedding
             relative_logits = torch.einsum(
                 "...ik, ...jk -> ...ij", queries, relative_embeddings
@@ -58,7 +69,12 @@ class MultiHeadAttention(nn.Module):
             # Concatenate a zero column to pad the original tensor
             relative_logits = torch.cat(
                 (
-                    torch.zeros(*other_dimensions, 1, relative_logits.size(-1)),
+                    torch.zeros(
+                        *other_dims,
+                        1,
+                        relative_logits.size(-1),
+                        device=relative_logits.device
+                    ),
                     relative_logits,
                 ),
                 dim=-2,
@@ -66,7 +82,7 @@ class MultiHeadAttention(nn.Module):
             # Reshape QR^T to align relative positions to position j - i in tensor,
             # and remove top row of zeros
             relative_logits = torch.reshape(
-                relative_logits, (*other_dimensions, seq_len + 1, seq_len)
+                relative_logits, (*other_dims, seq_len + 1, seq_len)
             )[..., 1:, :]
             attention_logits += relative_logits
 
@@ -80,29 +96,31 @@ class MultiHeadAttention(nn.Module):
         return attention_weights, attention_values
 
     def forward(self, x, mask=None):
-        other_dimensions = x.size()[:-1]
+        other_dims = x.size()[:-1]
         seq_length = x.size(-2)
 
         # Dynamically adjust the relative embeddings based on the sequence length
         relative_embeddings = self.relative_embeddings[..., -seq_length:, :]
-        qkv_concat = self.qkv_concat(x)  # Get the Q, K, V in one go
 
-        # Separate Q, K, V from linear output
-        qkv_concat = qkv_concat.reshape(
-            *other_dimensions, self.num_heads, 3 * self.head_dim
-        )
-        # [Batch, Head, SeqLen, Dims] Flip head and seq length dimension for attention
-        qkv_concat = qkv_concat.permute(0, 2, 1, 3)
-        q, k, v = qkv_concat.chunk(3, dim=-1)
+        # Apply projections for Q, K, V
+        queries = self.queries_proj(x)
+        keys = self.keys_proj(x)
+        values = self.values_proj(x)
 
-        # Determine value outputs
+        # Split for multi-head attention
+        queries = queries.view(*other_dims, self.num_heads, -1).permute(0, 2, 1, 3)
+        keys = keys.view(*other_dims, self.num_heads, -1).permute(0, 2, 1, 3)
+        values = values.view(*other_dims, self.num_heads, -1).permute(0, 2, 1, 3)
+
+        # Compute attention
         attention_weights, attention_values = self.attention(
-            q, k, v, relative_embeddings=relative_embeddings, mask=mask
+            queries, keys, values, relative_embeddings=relative_embeddings, mask=mask
         )
-        # [Batch, SeqLen, Head, Dims]
-        attention_values = attention_values.permute(0, 2, 1, 3)
-        # Concatenate head output
-        attention_values = attention_values.reshape(*other_dimensions, self.embed_dim)
+
+        # Concatenate head outputs
+        attention_values = attention_values.permute(0, 2, 1, 3).reshape(*other_dims, -1)
+
+        # Final output projection
         attention_output = self.output_proj(attention_values)
 
         return attention_output, attention_weights
