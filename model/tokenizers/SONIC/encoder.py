@@ -231,9 +231,6 @@ class Encoder:
                 "duration_index": len(self.tokens) - 1,
             }
 
-        # Finish the chord
-        self.add_tokens("EOC")
-
     def _append_vpod_tokens(self, note, prev_velocity, tempo_bpm, time_signature, key):
         v, p, o, d_bars, d_offset = self._get_vpod_tokens(
             note, prev_velocity, tempo_bpm, time_signature, key
