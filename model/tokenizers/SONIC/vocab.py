@@ -95,10 +95,12 @@ def build_vocab(genres):
                   vocab[duration_token] = vocab_idx
                   vocab_idx += 1 
 
-    for token in ("SOS", "EOC", "EOS"):
+    for token in ("SOS", "EOS"):
         vocab[token] = vocab_idx
         vocab_idx += 1
 
     return vocab
 
 
+def translate_token(token, vocab):
+    return vocab.inv.get(token, token)
